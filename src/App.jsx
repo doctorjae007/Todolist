@@ -28,9 +28,9 @@ export default function App() {
       const email = result.user.email;
 
       // 🔥 เปลี่ยนเป็น Gmail ของครู
-      const ADMIN_EMAIL = "bankhuha888@gmail.com";
+      const ADMIN_EMAIL = ["bankhuha888@gmail.com", "jaeautobot@gmail.com"];
 
-      if (email === ADMIN_EMAIL) {
+      if (ADMIN_EMAIL.includes(email)) {
 
         setIsTeacher(true);
         setUser(result.user);
@@ -106,33 +106,7 @@ export default function App() {
   // =========================
 
   const [assignments, setAssignments] = useState([
-    {
-      id: 1,
-      title: "งานเศษส่วน",
-      theme: "tree",
-      icon: "🌳",
-      startDate: "2026-05-24",
-      dueDate: "2026-05-30",
-      completedStudents: students.slice(0, 12)
-    },
-    {
-      id: 2,
-      title: "งานโจทย์ปัญหา",
-      theme: "rocket",
-      icon: "🚀",
-      startDate: "2026-05-24",
-      dueDate: "2026-05-28",
-      completedStudents: students.slice(0, 8)
-    },
-    {
-      id: 3,
-      title: "งานเรขาคณิต",
-      theme: "cloud",
-      icon: "☁️",
-      startDate: "2026-05-24",
-      dueDate: "2026-06-01",
-      completedStudents: students.slice(0, 20)
-    }
+    
   ]);
 
   // =========================
