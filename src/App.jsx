@@ -28,9 +28,15 @@ export default function App() {
       const email = result.user.email;
 
       // 🔥 เปลี่ยนเป็น Gmail ของครู
-      const ADMIN_EMAIL = ["bankhuha888@gmail.com", "jaeautobot@gmail.com"];
+      const email = result.user.email?.toLowerCase().trim();
 
-      if (ADMIN_EMAIL.includes(email)) {
+const ADMIN_EMAIL = [
+  "bankhuha888@gmail.com",
+  "jaeautobot@gmail.com",
+  "Kam.khliktho@gmail.com"
+];
+
+if (ADMIN_EMAIL.includes(email)) {
 
         setIsTeacher(true);
         setUser(result.user);
