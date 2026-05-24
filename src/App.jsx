@@ -10,7 +10,7 @@ import {
   collection,
   addDoc,
   getDocs,
-  deleteDoc,
+  updateDoc,
   doc
 } from "firebase/firestore";
 
@@ -21,8 +21,13 @@ export default function App() {
   // =========================
   // LOGIN
   // =========================
-  const [isTeacher, setIsTeacher] = useState(false);
-  const [user, setUser] = useState(null);
+  const [isTeacher, setIsTeacher] = useState(
+    JSON.parse(localStorage.getItem("isTeacher")) || false
+  );
+
+  const [user, setUser] = useState(
+    JSON.parse(localStorage.getItem("user")) || null
+  );
 
   const provider = new GoogleAuthProvider();
 
@@ -33,31 +38,36 @@ export default function App() {
   ];
 
   const loginTeacher = async () => {
-    try {
-      const result = await signInWithPopup(auth, provider);
+    const result = await signInWithPopup(auth, provider);
 
-      const email = result.user.email?.toLowerCase().trim();
+    const email = result.user.email?.toLowerCase().trim();
 
-      if (ADMIN_EMAIL.includes(email)) {
-        setIsTeacher(true);
-        setUser(result.user);
-      } else {
-        alert("บัญชีนี้ไม่ใช่ครู");
-      }
+    if (ADMIN_EMAIL.includes(email)) {
+      setIsTeacher(true);
+      setUser(result.user);
 
-    } catch (err) {
-      console.log(err);
+      localStorage.setItem("isTeacher", "true");
+      localStorage.setItem("user", JSON.stringify(result.user));
+    } else {
+      alert("ไม่ใช่ครู");
     }
   };
 
   const logoutTeacher = async () => {
+    const ok = confirm("ออกจากระบบ?");
+    if (!ok) return;
+
     await signOut(auth);
+
     setIsTeacher(false);
     setUser(null);
+
+    localStorage.removeItem("isTeacher");
+    localStorage.removeItem("user");
   };
 
   // =========================
-  // STUDENTS
+  // DATA
   // =========================
   const students = [
     "ภูมิ","พีพี","คิงคอง","กฤษฎา","จารุวิทย์","เพชร",
@@ -66,252 +76,288 @@ export default function App() {
     "วิว","อาร์ม","สปาย","แอฟ","จีจ้า","ญาญ่า","กีตาร์","สา"
   ];
 
-  // =========================
-  // FORM
-  // =========================
+  const [assignments, setAssignments] = useState([]);
+  const [scores, setScores] = useState([]);
+
   const [newTitle, setNewTitle] = useState("");
-  const [newTheme, setNewTheme] = useState("tree");
   const [startDate, setStartDate] = useState("");
   const [dueDate, setDueDate] = useState("");
 
   // =========================
-  // FIREBASE DATA
-  // =========================
-  const [assignments, setAssignments] = useState([]);
-
-  // =========================
-  // LOAD FROM FIREBASE (กันหายตอน refresh)
+  // LOAD
   // =========================
   useEffect(() => {
-    const fetchData = async () => {
-      const snapshot = await getDocs(collection(db, "assignments"));
+    const load = async () => {
+      const aSnap = await getDocs(collection(db, "assignments"));
+      const sSnap = await getDocs(collection(db, "scores"));
 
-      const data = snapshot.docs.map((d) => ({
-        id: d.id,
-        ...d.data()
-      }));
-
-      setAssignments(data);
+      setAssignments(aSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setScores(sSnap.docs.map(d => ({ id: d.id, ...d.data() })));
     };
 
-    fetchData();
+    load();
   }, []);
 
   // =========================
-  // ADD ASSIGNMENT (Firebase)
+  // ADD ASSIGNMENT
   // =========================
   const addAssignment = async () => {
     if (!newTitle) return;
 
-    const icons = {
-      tree: "🌳",
-      rocket: "🚀",
-      cloud: "☁️",
-      house: "🏡"
-    };
-
-    const newItem = {
+    await addDoc(collection(db, "assignments"), {
       title: newTitle,
-      theme: newTheme,
-      icon: icons[newTheme],
       startDate,
       dueDate,
-      completedStudents: []
-    };
-
-    const docRef = await addDoc(
-      collection(db, "assignments"),
-      newItem
-    );
-
-    setAssignments([
-      ...assignments,
-      { id: docRef.id, ...newItem }
-    ]);
+      completedStudents: [],
+      first5Stars: []   // ⭐ NEW
+    });
 
     setNewTitle("");
-    setNewTheme("tree");
     setStartDate("");
     setDueDate("");
   };
 
   // =========================
-  // DELETE (Firebase)
+  // TOGGLE + STAR SYSTEM
   // =========================
-  const deleteAssignment = async (id) => {
-    await deleteDoc(doc(db, "assignments", id));
+  const toggleStudent = async (assignmentId, student) => {
 
-    setAssignments(
-      assignments.filter((a) => a.id !== id)
+    if (!isTeacher) return;
+
+    const a = assignments.find(x => x.id === assignmentId);
+
+    const list = a.completedStudents || [];
+    const stars = a.first5Stars || [];
+
+    const exists = list.includes(student);
+
+    let newList;
+
+    if (exists) {
+      newList = list.filter(s => s !== student);
+    } else {
+      newList = [...list, student];
+    }
+
+    // ⭐ STAR LOGIC (first 5 only)
+    let newStars = stars;
+
+    if (!exists && !stars.includes(student) && stars.length < 5) {
+      newStars = [...stars, student];
+    }
+
+    await updateDoc(doc(db, "assignments", assignmentId), {
+      completedStudents: newList,
+      first5Stars: newStars
+    });
+
+    // =========================
+    // SCORE +1
+    // =========================
+    const scoreDoc = scores.find(s => s.studentName === student);
+
+    if (scoreDoc && !exists) {
+      const newScore = scoreDoc.score + 1;
+
+      await updateDoc(doc(db, "scores", scoreDoc.id), {
+        score: newScore
+      });
+
+      setScores(prev =>
+        prev.map(s =>
+          s.studentName === student
+            ? { ...s, score: newScore }
+            : s
+        )
+      );
+    }
+
+    setAssignments(prev =>
+      prev.map(a =>
+        a.id === assignmentId
+          ? {
+              ...a,
+              completedStudents: newList,
+              first5Stars: newStars
+            }
+          : a
+      )
     );
   };
 
   // =========================
-  // TOGGLE STUDENT (local only ยังไม่ sync firebase)
+  // STAR LEADERBOARD (รวมดาว)
   // =========================
-  const toggleStudent = (assignmentId, student) => {
-    if (!isTeacher) return;
+  const starCount = {};
 
-    const updated = assignments.map((a) => {
-      if (a.id !== assignmentId) return a;
-
-      const exists = a.completedStudents.includes(student);
-
-      return {
-        ...a,
-        completedStudents: exists
-          ? a.completedStudents.filter((s) => s !== student)
-          : [...a.completedStudents, student]
-      };
+  assignments.forEach(a => {
+    (a.first5Stars || []).forEach(name => {
+      starCount[name] = (starCount[name] || 0) + 1;
     });
+  });
 
-    setAssignments(updated);
-  };
+  const starLeaderboard = Object.entries(starCount)
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count);
 
   // =========================
-  // POSITION
+  // SCORE LEADERBOARD
   // =========================
-  const positions = [
-    "top-10 left-10","top-24 left-40","top-10 left-72",
-    "top-24 right-24","top-40 left-10","top-44 left-56",
-    "top-36 right-8","top-56 left-24","top-60 left-72",
-    "top-64 right-12","top-80 left-10","top-80 left-44",
-    "top-80 left-80","top-96 left-20","top-96 left-56",
-    "top-96 right-16","top-16 left-[420px]","top-48 left-[420px]",
-    "top-72 left-[420px]","top-24 left-[520px]","top-56 left-[520px]",
-    "top-84 left-[520px]","top-36 left-[620px]","top-72 left-[620px]",
-    "top-[420px] left-[340px]","top-[420px] left-[520px]"
-  ];
+  const scoreLeaderboard = [...scores].sort((a, b) => b.score - a.score);
 
+  // =========================
+  // UI
+  // =========================
   return (
-    <div className="min-h-screen bg-gradient-to-b from-sky-200 via-green-100 to-green-200 p-6">
+    <div className="min-h-screen bg-gray-100 p-4">
 
-      <div className="max-w-7xl mx-auto">
+      <h1 className="text-3xl font-black text-center mb-4">
+        🏫 Classroom System
+      </h1>
 
-        {/* HEADER */}
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-black text-green-800">
-            🌳 Forest Classroom
-          </h1>
-        </div>
+      {/* TOP STAR LEADERBOARD */}
+      <div className="bg-yellow-100 p-4 rounded-xl mb-4">
 
-        {/* LOGIN */}
-        <div className="flex justify-center gap-4 mb-8">
+        <h2 className="font-bold mb-2">⭐ Top Star (5 คนแรก)</h2>
 
-          {!isTeacher ? (
-            <button
-              onClick={loginTeacher}
-              className="bg-blue-600 text-white px-6 py-3 rounded-2xl font-bold"
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+
+          {starLeaderboard.map((s, i) => (
+            <div
+              key={s.name}
+              className="bg-white p-2 rounded-xl text-center font-bold"
             >
-              Login Teacher
-            </button>
-          ) : (
-            <div className="flex gap-4 items-center">
-              <div className="bg-white px-4 py-2 rounded-xl">
-                {user?.email}
-              </div>
-
-              <button
-                onClick={logoutTeacher}
-                className="bg-red-500 text-white px-6 py-3 rounded-xl"
-              >
-                Logout
-              </button>
+              {i < 3 ? "🏆" : "⭐"} {s.name}
+              <div className="text-sm">{s.count} ⭐</div>
             </div>
-          )}
+          ))}
 
         </div>
 
-        {/* TEACHER PANEL */}
-        {isTeacher && (
-          <div className="bg-white p-4 rounded-2xl mb-6">
+      </div>
 
-            <input
-              placeholder="ชื่องาน"
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              className="border p-2 mr-2"
-            />
+      {/* SCORE LEADERBOARD */}
+      <div className="bg-white p-4 rounded-xl mb-6 overflow-x-auto">
 
-            <select
-              value={newTheme}
-              onChange={(e) => setNewTheme(e.target.value)}
-              className="border p-2 mr-2"
-            >
-              <option value="tree">🌳</option>
-              <option value="rocket">🚀</option>
-              <option value="cloud">☁️</option>
-              <option value="house">🏡</option>
-            </select>
+        <h2 className="font-bold mb-2">📊 คะแนนรวมทั้งเทอม</h2>
+
+        <table className="min-w-full border text-sm">
+
+          <thead>
+            <tr className="bg-gray-200">
+              <th className="border p-2">อันดับ</th>
+              <th className="border p-2">ชื่อ</th>
+              <th className="border p-2">คะแนน</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {scoreLeaderboard.map((s, i) => (
+              <tr key={s.id} className="text-center">
+
+                <td className="border p-2">
+                  {i + 1}
+                </td>
+
+                <td className="border p-2">
+                  {s.studentName}
+                </td>
+
+                <td className="border p-2 font-bold">
+                  {s.score}
+                </td>
+
+              </tr>
+            ))}
+          </tbody>
+
+        </table>
+
+      </div>
+
+      {/* ADD ASSIGNMENT */}
+      {isTeacher && (
+        <div className="bg-white p-4 rounded-xl mb-6">
+
+          <input
+            value={newTitle}
+            onChange={(e) => setNewTitle(e.target.value)}
+            placeholder="ชื่องาน"
+            className="border p-2 rounded-xl w-full mb-2"
+          />
+
+          <div className="flex gap-2 flex-wrap">
 
             <input
               type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
-              className="border p-2 mr-2"
+              className="border p-2 rounded-xl"
             />
 
             <input
               type="date"
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
-              className="border p-2 mr-2"
+              className="border p-2 rounded-xl"
             />
 
             <button
               onClick={addAssignment}
-              className="bg-green-600 text-white px-4 py-2 rounded-xl"
+              className="bg-green-600 text-white px-4 rounded-xl"
             >
               เพิ่มงาน
             </button>
 
           </div>
-        )}
 
-        {/* ASSIGNMENTS */}
-        {assignments.map((a) => {
+        </div>
+      )}
 
-          const percent = Math.round(
-            (a.completedStudents?.length || 0) / students.length * 100
-          );
+      {/* ASSIGNMENTS */}
+      {assignments.map(a => (
 
-          return (
-            <div key={a.id} className="bg-white p-6 rounded-2xl mb-6">
+        <div key={a.id} className="bg-white p-4 rounded-xl mb-4">
 
-              <h2 className="text-xl font-bold">
-                {a.icon} {a.title}
-              </h2>
+          <h2 className="font-bold">📌 {a.title}</h2>
 
-              <p>📅 {a.startDate} - ⏰ {a.dueDate}</p>
-              <p>Progress: {percent}%</p>
+          <p className="text-sm text-gray-600">
+            📅 {a.startDate} → ⏰ {a.dueDate}
+          </p>
 
-              {/* students */}
-              <div className="grid grid-cols-4 gap-2 mt-4">
-                {students.map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => toggleStudent(a.id, s)}
-                    className="p-2 bg-gray-200 rounded-xl"
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
+          {/* ⭐ SHOW FIRST 5 */}
+          {(a.first5Stars || []).length > 0 && (
+            <p className="text-yellow-600 font-bold mt-2">
+              ⭐ คนได้ดาว: {a.first5Stars.join(", ")}
+            </p>
+          )}
 
-              {isTeacher && (
+          <div className="grid grid-cols-3 md:grid-cols-6 gap-2 mt-3">
+
+            {students.map(s => {
+              const done = a.completedStudents?.includes(s);
+              const star = a.first5Stars?.includes(s);
+
+              return (
                 <button
-                  onClick={() => deleteAssignment(a.id)}
-                  className="mt-4 bg-red-500 text-white px-4 py-2 rounded-xl"
+                  key={s}
+                  onClick={() => toggleStudent(a.id, s)}
+                  className={`p-2 rounded-xl font-bold transition-all
+                    ${star ? "bg-yellow-400 text-white" :
+                      done ? "bg-green-500 text-white" :
+                      "bg-gray-200"}
+                  `}
                 >
-                  ลบงาน
+                  {star ? "⭐" : ""} {s}
                 </button>
-              )}
+              );
+            })}
 
-            </div>
-          );
-        })}
+          </div>
 
-      </div>
+        </div>
+      ))}
+
     </div>
   );
 }
