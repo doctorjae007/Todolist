@@ -47,7 +47,11 @@ export default function App() {
       setUser(result.user);
 
       localStorage.setItem("isTeacher", "true");
-      localStorage.setItem("user", JSON.stringify(result.user));
+      localStorage.setItem("user", JSON.stringify({
+        uid: result.user.uid,
+        email: result.user.email,
+        displayName: result.user.displayName
+      }));
     } else {
       alert("ไม่ใช่ครู");
     }
@@ -102,10 +106,15 @@ export default function App() {
   // ADD ASSIGNMENT
   // =========================
   const addAssignment = async () => {
-    if (!newTitle) return;
+    const trimmed = newTitle.trim();
+    if (!trimmed || trimmed.length > 200) return;
+
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (startDate && !dateRegex.test(startDate)) return;
+    if (dueDate && !dateRegex.test(dueDate)) return;
 
     await addDoc(collection(db, "assignments"), {
-      title: newTitle,
+      title: trimmed,
       startDate,
       dueDate,
       completedStudents: [],
