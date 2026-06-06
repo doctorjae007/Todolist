@@ -21,13 +21,23 @@ export default function App() {
   // =========================
   // LOGIN
   // =========================
-  const [isTeacher, setIsTeacher] = useState(
-    JSON.parse(localStorage.getItem("isTeacher")) || false
-  );
+  const [isTeacher, setIsTeacher] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("isTeacher")) || false;
+    } catch {
+      localStorage.removeItem("isTeacher");
+      return false;
+    }
+  });
 
-  const [user, setUser] = useState(
-    JSON.parse(localStorage.getItem("user")) || null
-  );
+  const [user, setUser] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("user")) || null;
+    } catch {
+      localStorage.removeItem("user");
+      return null;
+    }
+  });
 
   const provider = new GoogleAuthProvider();
 
@@ -38,18 +48,24 @@ export default function App() {
   ];
 
   const loginTeacher = async () => {
-    const result = await signInWithPopup(auth, provider);
+    try {
+      const result = await signInWithPopup(auth, provider);
 
-    const email = result.user.email?.toLowerCase().trim();
+      const email = result.user.email?.toLowerCase().trim();
 
-    if (ADMIN_EMAIL.includes(email)) {
-      setIsTeacher(true);
-      setUser(result.user);
+      if (ADMIN_EMAIL.includes(email)) {
+        setIsTeacher(true);
+        setUser(result.user);
 
-      localStorage.setItem("isTeacher", "true");
-      localStorage.setItem("user", JSON.stringify(result.user));
-    } else {
-      alert("ไม่ใช่ครู");
+        localStorage.setItem("isTeacher", "true");
+        localStorage.setItem("user", JSON.stringify(result.user));
+      } else {
+        alert("ไม่ใช่ครู");
+      }
+    } catch (err) {
+      if (err.code === "auth/popup-closed-by-user") return;
+      console.error("Login failed:", err);
+      alert("เข้าสู่ระบบไม่สำเร็จ: " + err.message);
     }
   };
 
@@ -57,7 +73,13 @@ export default function App() {
     const ok = confirm("ออกจากระบบ?");
     if (!ok) return;
 
-    await signOut(auth);
+    try {
+      await signOut(auth);
+    } catch (err) {
+      console.error("Logout failed:", err);
+      alert("ออกจากระบบไม่สำเร็จ: " + err.message);
+      return;
+    }
 
     setIsTeacher(false);
     setUser(null);
@@ -78,6 +100,8 @@ export default function App() {
 
   const [assignments, setAssignments] = useState([]);
   const [scores, setScores] = useState([]);
+  const [loadError, setLoadError] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   const [newTitle, setNewTitle] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -88,11 +112,21 @@ export default function App() {
   // =========================
   useEffect(() => {
     const load = async () => {
-      const aSnap = await getDocs(collection(db, "assignments"));
-      const sSnap = await getDocs(collection(db, "scores"));
+      try {
+        setLoadError(null);
+        setLoading(true);
 
-      setAssignments(aSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-      setScores(sSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+        const aSnap = await getDocs(collection(db, "assignments"));
+        const sSnap = await getDocs(collection(db, "scores"));
+
+        setAssignments(aSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+        setScores(sSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+      } catch (err) {
+        console.error("Failed to load data:", err);
+        setLoadError(err.message);
+      } finally {
+        setLoading(false);
+      }
     };
 
     load();
@@ -104,17 +138,34 @@ export default function App() {
   const addAssignment = async () => {
     if (!newTitle) return;
 
-    await addDoc(collection(db, "assignments"), {
-      title: newTitle,
-      startDate,
-      dueDate,
-      completedStudents: [],
-      first5Stars: []   // ⭐ NEW
-    });
+    try {
+      const docRef = await addDoc(collection(db, "assignments"), {
+        title: newTitle,
+        startDate,
+        dueDate,
+        completedStudents: [],
+        first5Stars: []
+      });
 
-    setNewTitle("");
-    setStartDate("");
-    setDueDate("");
+      setAssignments(prev => [
+        ...prev,
+        {
+          id: docRef.id,
+          title: newTitle,
+          startDate,
+          dueDate,
+          completedStudents: [],
+          first5Stars: []
+        }
+      ]);
+
+      setNewTitle("");
+      setStartDate("");
+      setDueDate("");
+    } catch (err) {
+      console.error("Failed to add assignment:", err);
+      alert("เพิ่มงานไม่สำเร็จ: " + err.message);
+    }
   };
 
   // =========================
@@ -125,6 +176,7 @@ export default function App() {
     if (!isTeacher) return;
 
     const a = assignments.find(x => x.id === assignmentId);
+    if (!a) return;
 
     const list = a.completedStudents || [];
     const stars = a.first5Stars || [];
@@ -146,10 +198,16 @@ export default function App() {
       newStars = [...stars, student];
     }
 
-    await updateDoc(doc(db, "assignments", assignmentId), {
-      completedStudents: newList,
-      first5Stars: newStars
-    });
+    try {
+      await updateDoc(doc(db, "assignments", assignmentId), {
+        completedStudents: newList,
+        first5Stars: newStars
+      });
+    } catch (err) {
+      console.error("Failed to update assignment:", err);
+      alert("อัปเดตงานไม่สำเร็จ: " + err.message);
+      return;
+    }
 
     // =========================
     // SCORE +1
@@ -159,17 +217,22 @@ export default function App() {
     if (scoreDoc && !exists) {
       const newScore = scoreDoc.score + 1;
 
-      await updateDoc(doc(db, "scores", scoreDoc.id), {
-        score: newScore
-      });
+      try {
+        await updateDoc(doc(db, "scores", scoreDoc.id), {
+          score: newScore
+        });
 
-      setScores(prev =>
-        prev.map(s =>
-          s.studentName === student
-            ? { ...s, score: newScore }
-            : s
-        )
-      );
+        setScores(prev =>
+          prev.map(s =>
+            s.studentName === student
+              ? { ...s, score: newScore }
+              : s
+          )
+        );
+      } catch (err) {
+        console.error("Failed to update score:", err);
+        alert("อัปเดตคะแนนไม่สำเร็จ: " + err.message);
+      }
     }
 
     setAssignments(prev =>
@@ -208,6 +271,29 @@ export default function App() {
   // =========================
   // UI
   // =========================
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+        <p className="text-xl text-gray-500">กำลังโหลดข้อมูล...</p>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center gap-4">
+        <p className="text-xl text-red-600">โหลดข้อมูลไม่สำเร็จ</p>
+        <p className="text-sm text-gray-500">{loadError}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="bg-blue-600 text-white px-4 py-2 rounded-xl"
+        >
+          ลองใหม่
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-100 p-4">
 
